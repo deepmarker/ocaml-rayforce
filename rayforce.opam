@@ -1,0 +1,26 @@
+opam-version: "2.0"
+maintainer: "Vincent Bernardoff <vb@luminar.eu.org>"
+authors: ["Vincent Bernardoff <vb@luminar.eu.org>"]
+license: "ISC"
+tags: []
+depends: [
+  "ocaml" {>= "4.14.0"}
+  "dune" {>= "3.10"}
+  "dune-configurator"
+]
+build: [ "dune" "build" "-j" jobs "-p" name ]
+run-test: [ "dune" "runtest" "-j" jobs "-p" name ]
+synopsis: "OCaml client binding for rayforce's embeddable C API"
+description: """
+Thin FFI binding over rayforce.h's client-side surface: runtime init,
+IPC connect/send/send_async, and the atom/vector/table/list constructors
+needed to build values to ship over IPC without going through the
+Rayfall parser. Does not wrap ray_eval_str / the interpreter — this is
+a feedhandler-side client, not an embedded interpreter.
+
+Needs a librayforce.a to link against. The ~/code/aur/rayforce package
+(pkgrel 2+) installs it plus a pkg-config file, which this library's
+dune rule picks up automatically. On a machine without that package,
+point RAYFORCE_LIBDIR at a `rayforce` checkout built with `make`
+(produces librayforce.a at the repo root) instead.
+"""

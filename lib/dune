@@ -1,0 +1,19 @@
+(library
+ (public_name rayforce)
+ (foreign_stubs
+  (language c)
+  (names rayforce_stubs)
+  (flags
+   :standard
+   (:include c_flags.sexp)
+   -Wall
+   -Werror))
+ (c_library_flags
+  :standard
+  (:include c_library_flags.sexp))
+ (libraries bigarray))
+
+(rule
+ (targets c_flags.sexp c_library_flags.sexp)
+ (action
+  (run ./config/discover.exe)))

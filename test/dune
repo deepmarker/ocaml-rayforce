@@ -1,0 +1,7 @@
+(test
+ (name test)
+ (libraries rayforce))
+
+(executable
+ (name test_ipc)
+ (libraries rayforce unix))

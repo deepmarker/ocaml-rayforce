@@ -1,10 +1,10 @@
 /* OCaml <-> rayforce C API bindings.
  *
- * Client-side surface only: runtime init, IPC connect/send/send_async, and
- * the atom/vector/table/list constructors needed to build a ray_t* value to
- * ship over IPC.  Deliberately does NOT wrap ray_eval_str or the
- * interpreter — this binds a feedhandler-style client, not an embedded
- * Rayforce process.
+ * Covers both the IPC-client surface (runtime init, connect/send/send_async,
+ * and the atom/vector/table/list/dict constructors needed to build a ray_t*
+ * value) and the embedded-runtime surface (ray_eval_str, env get/set, poll
+ * run/exit) — ml_rayforce_init already creates the process's one
+ * ray_runtime_t and poll, so both surfaces share the same underlying state.
  *
  * Ownership, verified against rayforce's own src/ (not just rayforce.h's
  * comments):
@@ -16,11 +16,23 @@
  *     pass a Bigarray pointer without keeping it alive afterwards.
  *   - ray_ipc_send_async's `msg` is borrowed (src/core/ipc.c) — caller
  *     must release its own ref after the call.
+ *   - ray_dict_new consumes both `keys` and `vals`; ray_dict_keys/vals are
+ *     borrowed (rayforce.h is explicit about all four, no src/ digging
+ *     needed) — the borrowed getters below ray_retain before wrapping so
+ *     the OCaml value and the dict's own internal ref release independently.
+ *   - ray_env_get (src/lang/env.c: env_lookup_flat / the dotted walk) hands
+ *     back the env's own pointer, not a fresh ref — "Returning env-owned
+ *     pointers... keeps the caller's retain/release balance correct" per
+ *     that function's own comment. So this too needs a ray_retain before
+ *     wrapping. ray_env_set retains internally (env_bind_global_impl) —
+ *     caller keeps owning `val`, matching the docstring example in
+ *     rayforce.h ("ray_env_set(name_id, my_table); // rayforce retains").
  *
  * ray_t* values are wrapped in an OCaml custom block whose finalizer calls
- * ray_release. Consuming calls (table_add_col, list_append) null out the
- * source custom block's pointer so its finalizer becomes a no-op — the
- * OCaml-level API treats the consumed value as moved-from; do not reuse it.
+ * ray_release. Consuming calls (table_add_col, list_append, dict_new,
+ * dict_upsert, dict_remove) null out the source custom block's pointer so
+ * its finalizer becomes a no-op — the OCaml-level API treats the consumed
+ * value as moved-from; do not reuse it.
  */
 
 #include <rayforce.h>
@@ -33,6 +45,7 @@
 #include <caml/mlvalues.h>
 #include <caml/threads.h>
 
+#include <stdlib.h>
 #include <string.h>
 
 /* ===== ray_t* custom block ================================================= */
@@ -61,6 +74,23 @@ static value alloc_rayforce_value(ray_t* p) {
     return v;
 }
 
+/* `t option`: None for a genuine C-NULL "not found" result (ray_env_get,
+ * ray_dict_get) — distinct from a RAY_ERROR ray_t*, which raise_if_err
+ * turns into a Failure exception instead. Some p wraps p exactly like
+ * alloc_rayforce_value; the caller below is responsible for a ray_retain
+ * on p first if the C function documents p as borrowed. */
+static value alloc_rayforce_option(ray_t* p) {
+    if (!p) return Val_int(0); /* None */
+    /* Allocate the inner custom block FIRST: caml_alloc_small's result must
+     * have every field written before any further allocation runs (the GC
+     * may scan it as soon as it exists), so the inner alloc can't happen
+     * inside the Field() assignment below. */
+    value inner = alloc_rayforce_value(p);
+    value some = caml_alloc_small(1, 0);
+    Field(some, 0) = inner;
+    return some;
+}
+
 /* Raise Failure with the error's code + release it. Handles both the
  * ray_t*-error-object convention (most of the value API) and plain
  * ray_err_t codes (ray_ipc_send_async). */
@@ -82,12 +112,14 @@ static ray_poll_t* ml_rayforce_poll = NULL;
  * mem/heap.h (internal) declares the former, and ray_error() (used all
  * over the value/vec/table API on error paths) dereferences a live __VM
  * that only ray_runtime_create sets up. So ray_runtime_create is the
- * actual minimum, not a heavier "embed the interpreter" step: it builds
- * env/builtins state but never executes any Rayfall code — that only
- * happens if something calls ray_eval_str, which this binding doesn't
- * expose. A poll is still layered on top so ray_ipc_connect has a
- * selector table to register outbound connections in (see the IPC
- * guide's embedded-server example, which does the same). */
+ * actual minimum init step even for the IPC-client-only surface — it
+ * builds env/builtins state but doesn't itself execute any Rayfall code.
+ * ml_rayforce_eval_str below is what actually starts using that env to
+ * run code (directly, in-process — see the module doc in rayforce.mli
+ * for the embedded-runtime story). The poll created here is what both
+ * ray_ipc_connect (outbound sockets) and, once something calls
+ * `.sys.listen` via eval_str, an inbound listener register on (see the
+ * IPC guide's embedded-server example, which does the same). */
 CAMLprim value ml_rayforce_init(value unit) {
     CAMLparam1(unit);
     if (!ml_rayforce_rt) {
@@ -242,6 +274,180 @@ CAMLprim value ml_rayforce_list_append(value list, value item) {
     Rayforce_val(list) = NULL; /* consumed */
     raise_if_err(result);
     CAMLreturn(alloc_rayforce_value(result));
+}
+
+/* ===== Dicts ================================================================== */
+
+/* Consumes `keys` and `vals` both (ray_dict_new's documented contract). */
+CAMLprim value ml_rayforce_dict_new(value keys, value vals) {
+    CAMLparam2(keys, vals);
+    ray_t* k = Rayforce_val(keys);
+    ray_t* v = Rayforce_val(vals);
+    ray_t* result = ray_dict_new(k, v);
+    Rayforce_val(keys) = NULL; /* consumed */
+    Rayforce_val(vals) = NULL; /* consumed */
+    raise_if_err(result);
+    CAMLreturn(alloc_rayforce_value(result));
+}
+
+/* Borrowed: ray_retain before wrapping so the dict and this value release
+ * independently (see the file-header ownership note). */
+CAMLprim value ml_rayforce_dict_keys(value d) {
+    CAMLparam1(d);
+    ray_t* keys = ray_dict_keys(Rayforce_val(d));
+    raise_if_err(keys);
+    ray_retain(keys);
+    CAMLreturn(alloc_rayforce_value(keys));
+}
+
+CAMLprim value ml_rayforce_dict_vals(value d) {
+    CAMLparam1(d);
+    ray_t* vals = ray_dict_vals(Rayforce_val(d));
+    raise_if_err(vals);
+    ray_retain(vals);
+    CAMLreturn(alloc_rayforce_value(vals));
+}
+
+CAMLprim value ml_rayforce_dict_len(value d) {
+    CAMLparam1(d);
+    CAMLreturn(caml_copy_int64(ray_dict_len(Rayforce_val(d))));
+}
+
+/* Owned already (ray_dict_get's documented contract) -- wrap directly, no
+ * retain. NULL (missing key) becomes None, not an exception. */
+CAMLprim value ml_rayforce_dict_get(value d, value key) {
+    CAMLparam2(d, key);
+    ray_t* got = ray_dict_get(Rayforce_val(d), Rayforce_val(key));
+    raise_if_err(got);
+    CAMLreturn(alloc_rayforce_option(got));
+}
+
+/* Consumes `dict`; does not consume `key` or `v` (same shape as
+ * table_add_col/list_append). */
+CAMLprim value ml_rayforce_dict_upsert(value dict, value key, value v) {
+    CAMLparam3(dict, key, v);
+    ray_t* d = Rayforce_val(dict);
+    ray_t* k = Rayforce_val(key);
+    ray_t* val = Rayforce_val(v);
+    ray_t* result = ray_dict_upsert(d, k, val);
+    Rayforce_val(dict) = NULL; /* consumed */
+    raise_if_err(result);
+    CAMLreturn(alloc_rayforce_value(result));
+}
+
+/* Consumes `dict`; does not consume `key`. */
+CAMLprim value ml_rayforce_dict_remove(value dict, value key) {
+    CAMLparam2(dict, key);
+    ray_t* d = Rayforce_val(dict);
+    ray_t* k = Rayforce_val(key);
+    ray_t* result = ray_dict_remove(d, k);
+    Rayforce_val(dict) = NULL; /* consumed */
+    raise_if_err(result);
+    CAMLreturn(alloc_rayforce_value(result));
+}
+
+/* ===== Formatting ============================================================= */
+
+CAMLprim value ml_rayforce_fmt(value v, value pretty) {
+    CAMLparam2(v, pretty);
+    CAMLlocal1(s);
+    ray_t* formatted = ray_fmt(Rayforce_val(v), Bool_val(pretty) ? 1 : 0);
+    raise_if_err(formatted);
+    size_t len = ray_str_len(formatted);
+    s = caml_alloc_string(len);
+    memcpy(Bytes_val(s), ray_str_ptr(formatted), len);
+    ray_release(formatted);
+    CAMLreturn(s);
+}
+
+/* ===== Embedded evaluation ===================================================== */
+
+/* Copies the source into a NUL-terminated heap buffer before releasing the
+ * runtime lock, same reasoning as ml_rayforce_ipc_connect's host/user/pass
+ * copies: the GC must not move/free the OCaml string while ray_eval_str (an
+ * unbounded, potentially slow call) runs without the lock held. Unlike
+ * those fixed-size auth fields, Rayfall source has no realistic size cap,
+ * hence a heap allocation rather than a stack buffer. */
+CAMLprim value ml_rayforce_eval_str(value src) {
+    CAMLparam1(src);
+    size_t len = caml_string_length(src);
+    char* buf = (char*)malloc(len + 1);
+    if (!buf) caml_failwith("rayforce: eval_str: out of memory");
+    memcpy(buf, String_val(src), len);
+    buf[len] = '\0';
+
+    caml_release_runtime_system();
+    ray_t* result = ray_eval_str(buf);
+    caml_acquire_runtime_system();
+
+    free(buf);
+    raise_if_err(result);
+    CAMLreturn(alloc_rayforce_value(result));
+}
+
+/* ===== Environment ============================================================= */
+
+/* Borrowed (env-owned) pointer, or NULL if `id` is unbound -- see the
+ * file-header ownership note. NULL becomes None, not an exception; a
+ * genuine RAY_ERROR result (e.g. from a dotted-path container probe that
+ * failed) still raises via raise_if_err. */
+CAMLprim value ml_rayforce_env_get(value id) {
+    CAMLparam1(id);
+    ray_t* v = ray_env_get(Int64_val(id));
+    raise_if_err(v);
+    ray_retain(v); /* NULL-safe; no-op when v is NULL */
+    CAMLreturn(alloc_rayforce_option(v));
+}
+
+/* Does not consume `v` -- ray_env_set retains its own reference
+ * internally (env_bind_global_impl), matching rayforce.h's own docstring
+ * example. Raises on RAY_ERR_RESERVED (id names a reserved .sys.
+ * namespace) or any other non-RAY_OK code. */
+CAMLprim value ml_rayforce_env_set(value id, value v) {
+    CAMLparam2(id, v);
+    ray_err_t rc = ray_env_set(Int64_val(id), Rayforce_val(v));
+    if (rc != RAY_OK) {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "rayforce: %s", ray_err_code_str(rc));
+        caml_failwith(buf);
+    }
+    CAMLreturn(Val_unit);
+}
+
+/* ===== Event loop =============================================================== */
+/* Drives ml_rayforce_poll, the same poll ml_rayforce_init attaches to the
+ * runtime and ray_ipc_connect registers outbound sockets on. */
+
+CAMLprim value ml_rayforce_poll_set_restricted(value restricted) {
+    CAMLparam1(restricted);
+    ray_poll_set_restricted(ml_rayforce_poll, Bool_val(restricted));
+    CAMLreturn(Val_unit);
+}
+
+/* Blocks until ray_poll_exit is called (from a Rayfall hook, typically).
+ * Releases the runtime lock like a blocking IPC send, so it doesn't stall
+ * other OCaml threads/domains while servicing events. */
+CAMLprim value ml_rayforce_poll_run(value unit) {
+    CAMLparam1(unit);
+    caml_release_runtime_system();
+    int64_t rc = ray_poll_run(ml_rayforce_poll);
+    caml_acquire_runtime_system();
+    CAMLreturn(caml_copy_int64(rc));
+}
+
+CAMLprim value ml_rayforce_poll_run_for(value timeout_ms) {
+    CAMLparam1(timeout_ms);
+    int timeout = Int_val(timeout_ms);
+    caml_release_runtime_system();
+    int64_t rc = ray_poll_run_for(ml_rayforce_poll, timeout);
+    caml_acquire_runtime_system();
+    CAMLreturn(caml_copy_int64(rc));
+}
+
+CAMLprim value ml_rayforce_poll_exit(value code) {
+    CAMLparam1(code);
+    ray_poll_exit(ml_rayforce_poll, Int64_val(code));
+    CAMLreturn(Val_unit);
 }
 
 /* ===== IPC client ============================================================= */

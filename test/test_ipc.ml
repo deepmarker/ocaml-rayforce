@@ -1,10 +1,15 @@
-(* Live-server smoke test — needs `rayforce -p 15555` running separately.
-   Not wired into `dune runtest` (no server fixture yet); run by hand:
-     dune exec lib/rayforce/test/test_ipc.exe *)
+(* Live-server smoke test. `dune runtest` drives this through
+   run_test_ipc.sh, which starts a throwaway `rayforce -p <port>` and
+   passes that port as argv.(1). Run by hand against a server you started
+   yourself with e.g. `dune exec lib/rayforce/test/test_ipc.exe -- 15555`
+   (falls back to 15555 if no argument is given). *)
 
 let () =
+  let port =
+    if Array.length Sys.argv > 1 then int_of_string Sys.argv.(1) else 15555
+  in
   Rayforce.init ();
-  let h = Rayforce.connect "127.0.0.1" 15555 in
+  let h = Rayforce.connect "127.0.0.1" port in
   (* String payload: parsed and evaluated server-side. *)
   let result = Rayforce.send h (Rayforce.str "(+ 1 2)") in
   Printf.printf "send (+ 1 2) -> nrows=%Ld (sanity: string result has no table shape,\n\

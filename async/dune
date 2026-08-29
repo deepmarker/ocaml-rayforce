@@ -1,0 +1,6 @@
+(library
+ (name rayforce_async)
+ (public_name rayforce-async)
+ (preprocess
+  (pps ppx_jane))
+ (libraries core core_unix.core_thread async rayforce))

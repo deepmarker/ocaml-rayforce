@@ -5,3 +5,14 @@
 (executable
  (name test_ipc)
  (libraries rayforce unix))
+
+; test_ipc needs a live `rayforce -p <port>` server. run_test_ipc.sh starts
+; one, waits for it to accept connections, runs test_ipc.exe against it,
+; and always tears it down afterward -- see that script for details.
+(rule
+ (alias runtest)
+ (deps
+  run_test_ipc.sh
+  %{exe:test_ipc.exe})
+ (action
+  (run bash run_test_ipc.sh %{exe:test_ipc.exe})))

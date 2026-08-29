@@ -1,21 +1,26 @@
 (** OCaml binding for rayforce's embeddable C API (rayforce.h).
 
-    This is a client-side binding only: it builds typed [ray_t*] values
-    (atoms, vectors, tables, lists) and ships them to a running rayforce
-    server over IPC. It does not embed the Rayfall interpreter — there is
-    no [ray_eval_str] here, deliberately: a feedhandler bridge has no need
-    to parse or evaluate Rayfall source locally, and pulling in the full
-    interpreter would mean carrying builtin/env bootstrap this binding
-    doesn't need.
+    Covers both ways to use rayforce from a host process:
 
-    Consequence: this binding cannot construct a call to a builtin (e.g.
-    [insert]) itself — builtin function objects only exist once the
-    interpreter's global env is populated, which only [ray_runtime_create]
-    does. What to do with a value once it reaches the server (call
-    [insert], fan it out to subscribers, ...) is server-side Rayfall logic,
-    installed via [.ipc.on.async] on the receiving rayforce process — not
-    something this binding tries to construct client-side. Build the
-    payload value here; decide what verb applies it in the server's hook. *)
+    - {b IPC client}: build typed [ray_t*] values (atoms, vectors, tables,
+      lists) and ship them to a running rayforce server over
+      {!connect}/{!send}/{!send_async}. The original use case (a
+      feedhandler bridge shipping table batches to a tickerplant) and
+      still the right choice when rayforce runs as its own process.
+    - {b Embedded runtime}: {!init} already creates the process-local
+      [ray_runtime_t] and attaches a poll, so {!eval_str} can run Rayfall
+      source directly against this process's own global env — no server,
+      no round-trip. {!env_get}/{!env_set} move values between OCaml and
+      that env; {!poll_run}/{!poll_run_for} drive the same poll {!connect}
+      registers outbound sockets on, so a call to [eval_str "(.sys.listen
+      7701)"] turns this process into an IPC server too.
+
+    Single-runtime: rayforce allows only one [ray_runtime_t] live per
+    process (see [ray_runtime_create]'s doc comment) — {!init} enforces
+    this by being idempotent rather than creating a second one. Symbols,
+    env and builtins are process-global for the same reason: there is
+    exactly one embedded env, shared by every {!eval_str} call and every
+    IPC connection (inbound or outbound) this process holds. *)
 
 (** {2 Runtime} *)
 
@@ -115,6 +120,113 @@ val list_new : int64 -> t
     consume [item] (matches [ray_list_append]'s retain-internally
     contract, same shape as {!table_add_col}). *)
 val list_append : t -> t -> t
+
+(** {3 Dicts}
+
+    A dict is a 2-pointer [keys, vals] block, layout-compatible with
+    {!type:t}'s table representation ([ray_t] with [type = RAY_DICT]).
+    Ownership below is as documented directly on the C side (rayforce.h)
+    rather than re-derived from src/, since the header is explicit here. *)
+
+(** {b Consumes both} [keys] and [vals]. *)
+val dict_new : t -> t -> t
+
+(** Borrowed from the dict; the OCaml wrapper holds its own retained
+    reference, so the dict and the returned value can be released
+    independently. *)
+val dict_keys : t -> t
+
+val dict_vals : t -> t
+
+(** Pair count (same as [keys]'s length). *)
+val dict_len : t -> int64
+
+(** [None] if [key] is not bound in [dict]. *)
+val dict_get : t -> key:t -> t option
+
+(** [dict_upsert dict ~key v] inserts or overwrites the pair. COW;
+    {b consumes [dict]}. Does not consume [key] or [v]. *)
+val dict_upsert : t -> key:t -> t -> t
+
+(** COW; {b consumes [dict]}. Does not consume [key]. A no-op (returns
+    [dict] unchanged) if [key] isn't bound. *)
+val dict_remove : t -> key:t -> t
+
+(** {2 Formatting}
+
+    [fmt v] renders [v] the way rayforce's own REPL/query-log would.
+    [~pretty:true] indents nested lists/dicts one level per line (matches
+    [ray_fmt(v, 1)]); the default is the single-line form ([ray_fmt(v,
+    0)]) used e.g. for query-log entries. *)
+val fmt : ?pretty:bool -> t -> string
+
+(** {2 Embedded evaluation}
+
+    Runs against the process-global env {!init} set up — the same env
+    {!env_get}/{!env_set} read and write, and the one every IPC
+    connection (client or server-side, once {!poll_run} is servicing a
+    [.sys.listen] socket) evaluates against. *)
+
+(** [eval_str src] parses and evaluates [src] as Rayfall source. Raises
+    [Failure] on a parse or evaluation error — same caveat as the rest of
+    this binding: only the short error code (e.g. ["type"], ["name"])
+    survives across the C boundary, not the full formatted message
+    ([ray_err_code] is all the public API exposes). *)
+val eval_str : string -> t
+
+(** {2 Environment}
+
+    Thread-safety mirrors [ray_env_get]/[ray_env_set]'s own documented
+    contract: the env is shared global state, and concurrent get/set from
+    multiple domains needs external synchronization by the caller. *)
+
+(** [env_get id] looks up the value bound to symbol [id]. [None] if
+    unbound. The returned value is independent of the env's own
+    reference (retained on the OCaml side) — releasing it does not
+    unbind [id]. *)
+val env_get : int64 -> t option
+
+(** [env_set id v] binds [v] under symbol [id], visible to subsequent
+    {!eval_str} calls and IPC evaluations. Does not consume [v] —
+    rayforce retains its own reference internally; the caller keeps
+    [v] and must still release/let-GC it separately. Raises [Failure] if
+    [id] names a reserved system namespace (e.g. anything under [.sys.]
+    other than the handful of [.ipc.*] connection hooks rayforce
+    carves out). *)
+val env_set : int64 -> t -> unit
+
+(** {2 Event loop}
+
+    Drives the poll {!init} created — the same one {!connect}'s outbound
+    sockets register on. Only needed once this process also wants to
+    service events itself: an inbound [.sys.listen] socket (bound via
+    {!eval_str}) or Rayfall timers. A process that only ever calls
+    {!connect}/{!send} never needs these — outbound synchronous IPC is
+    serviced inline by {!send} itself. *)
+
+(** Mark connections {e subsequently} created on this poll (by an inbound
+    [.sys.listen] socket or outbound {!connect}) as restricted
+    (read-only). Existing connections keep their original mode. Mirrors
+    [ray_poll_set_restricted]; call before servicing an embedded
+    listener you want read-only. *)
+val poll_set_restricted : bool -> unit
+
+(** Block servicing IPC and Rayfall timers until {!poll_exit} is called
+    from a hook. Releases the OCaml runtime lock for the duration, like
+    {!send}, so other OCaml threads/domains aren't stalled. Returns the
+    exit code passed to {!poll_exit}. *)
+val poll_run : unit -> int64
+
+(** As {!poll_run}, but serves for at most [timeout_ms] milliseconds
+    (negative preserves {!poll_run}'s blocking behavior; [0] does one
+    non-blocking drain) before returning. *)
+val poll_run_for : int -> int64
+
+(** Ends a {!poll_run}/{!poll_run_for} loop currently blocked in
+    {!poll_run}, with the given exit code. Typically called from a
+    Rayfall hook (e.g. a [.sys.] handler) via {!eval_str}-installed
+    logic, not from the OCaml side of a running loop. *)
+val poll_exit : int64 -> unit
 
 (** {2 IPC client}
 

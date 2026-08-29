@@ -47,6 +47,35 @@ external table_ncols : t -> int64 = "ml_rayforce_table_ncols"
 external list_new : int64 -> t = "ml_rayforce_list_new"
 external list_append : t -> t -> t = "ml_rayforce_list_append"
 
+external dict_new : t -> t -> t = "ml_rayforce_dict_new"
+external dict_keys : t -> t = "ml_rayforce_dict_keys"
+external dict_vals : t -> t = "ml_rayforce_dict_vals"
+external dict_len : t -> int64 = "ml_rayforce_dict_len"
+
+external dict_get_stub : t -> t -> t option = "ml_rayforce_dict_get"
+let dict_get dict ~key = dict_get_stub dict key
+
+external dict_upsert_stub : t -> t -> t -> t = "ml_rayforce_dict_upsert"
+let dict_upsert dict ~key v = dict_upsert_stub dict key v
+
+external dict_remove_stub : t -> t -> t = "ml_rayforce_dict_remove"
+let dict_remove dict ~key = dict_remove_stub dict key
+
+external fmt_stub : t -> bool -> string = "ml_rayforce_fmt"
+let fmt ?(pretty = false) v = fmt_stub v pretty
+
+external eval_str : string -> t = "ml_rayforce_eval_str"
+
+external env_get_stub : int64 -> t option = "ml_rayforce_env_get"
+let env_get id = env_get_stub id
+
+external env_set : int64 -> t -> unit = "ml_rayforce_env_set"
+
+external poll_set_restricted : bool -> unit = "ml_rayforce_poll_set_restricted"
+external poll_run : unit -> int64 = "ml_rayforce_poll_run"
+external poll_run_for : int -> int64 = "ml_rayforce_poll_run_for"
+external poll_exit : int64 -> unit = "ml_rayforce_poll_exit"
+
 type conn = int64
 
 external ipc_connect_stub

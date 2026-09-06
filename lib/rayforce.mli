@@ -74,6 +74,11 @@ val sym : int64 -> t
     bigarray need not outlive the call. *)
 
 val vec_i64 : (int64, Bigarray.int64_elt, Bigarray.c_layout) Bigarray.Array1.t -> t
+(** Boolean column. RAY_BOOL is one byte per element, hence the
+    int8_unsigned source; Rayfall renders these as true/false and compares
+    them with [(== col true)]. *)
+val vec_bool : (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t -> t
+
 val vec_f64 : (float, Bigarray.float64_elt, Bigarray.c_layout) Bigarray.Array1.t -> t
 
 (** Timestamp column. Rayforce counts nanoseconds from 2000-01-01, not the

@@ -13,6 +13,11 @@ external vec_i64
   -> t
   = "ml_rayforce_vec_i64"
 
+external vec_bool
+  :  (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+  -> t
+  = "ml_rayforce_vec_bool"
+
 external vec_f64
   :  (float, Bigarray.float64_elt, Bigarray.c_layout) Bigarray.Array1.t
   -> t

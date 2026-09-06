@@ -190,6 +190,17 @@ CAMLprim value ml_rayforce_vec_i64(value ba) {
     CAMLreturn(alloc_rayforce_value(v));
 }
 
+/* RAY_BOOL: one byte per element, so the source bigarray is an
+ * int8_unsigned one. Rayfall prints these as true/false and compares them
+ * with `(== col true)`. */
+CAMLprim value ml_rayforce_vec_bool(value ba) {
+    CAMLparam1(ba);
+    int64_t n = Caml_ba_array_val(ba)->dim[0];
+    ray_t* v = ray_vec_from_raw(RAY_BOOL, Caml_ba_data_val(ba), n);
+    raise_if_err(v);
+    CAMLreturn(alloc_rayforce_value(v));
+}
+
 CAMLprim value ml_rayforce_vec_f64(value ba) {
     CAMLparam1(ba);
     int64_t n = Caml_ba_array_val(ba)->dim[0];

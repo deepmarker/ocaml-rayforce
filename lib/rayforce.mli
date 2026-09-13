@@ -60,8 +60,8 @@ type t
 
 (** [release v] immediately releases [v]'s native allocation. It is
     idempotent; after the first call [v] is moved-from and must not be passed
-    to any operation. The GC finalizer remains a fallback for values whose
-    lifetime is not known explicitly. *)
+    to any operation; doing so raises [Invalid_argument]. The GC finalizer
+    remains a fallback for values whose lifetime is not known explicitly. *)
 val release : t -> unit
 
 (** {3 Atoms} *)

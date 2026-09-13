@@ -35,7 +35,8 @@ The IPC integration test starts a local Rayforce server and requires the
 Values of type `Rayforce.t` own a native Rayforce reference. They are released
 by an OCaml finalizer, or eagerly with `Rayforce.release` when their lifetime is
 known. Functions documented as consuming a value leave that OCaml wrapper
-moved-from and it must not be reused.
+moved-from and it must not be reused. Passing a released or moved-from value
+to another binding operation raises `Invalid_argument`.
 
 ## License
 

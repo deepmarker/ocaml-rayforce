@@ -52,6 +52,12 @@
 
 #define Rayforce_val(v) (*((ray_t**)Data_custom_val(v)))
 
+static ray_t* rayforce_val_exn(value v) {
+    ray_t* p = Rayforce_val(v);
+    if (!p) caml_invalid_argument("rayforce: value has been released or consumed");
+    return p;
+}
+
 static void ml_rayforce_finalize(value v) {
     ray_t* p = Rayforce_val(v);
     if (p) ray_release(p);
@@ -90,15 +96,17 @@ CAMLprim value ml_rayforce_release(value v) {
  * alloc_rayforce_value; the caller below is responsible for a ray_retain
  * on p first if the C function documents p as borrowed. */
 static value alloc_rayforce_option(ray_t* p) {
-    if (!p) return Val_int(0); /* None */
+    CAMLparam0();
+    CAMLlocal2(inner, some);
+    if (!p) CAMLreturn(Val_int(0)); /* None */
     /* Allocate the inner custom block FIRST: caml_alloc_small's result must
      * have every field written before any further allocation runs (the GC
      * may scan it as soon as it exists), so the inner alloc can't happen
      * inside the Field() assignment below. */
-    value inner = alloc_rayforce_value(p);
-    value some = caml_alloc_small(1, 0);
+    inner = alloc_rayforce_value(p);
+    some = caml_alloc_small(1, 0);
     Field(some, 0) = inner;
-    return some;
+    CAMLreturn(some);
 }
 
 /* Raise Failure with the error's code + release it. Handles both the
@@ -136,7 +144,11 @@ CAMLprim value ml_rayforce_init(value unit) {
         ml_rayforce_rt = ray_runtime_create(0, NULL);
         if (!ml_rayforce_rt) caml_failwith("rayforce: runtime_create failed");
         ml_rayforce_poll = ray_poll_create();
-        if (!ml_rayforce_poll) caml_failwith("rayforce: poll_create failed");
+        if (!ml_rayforce_poll) {
+            ray_runtime_destroy(ml_rayforce_rt);
+            ml_rayforce_rt = NULL;
+            caml_failwith("rayforce: poll_create failed");
+        }
         ray_runtime_set_poll(ml_rayforce_poll);
     }
     CAMLreturn(Val_unit);
@@ -256,8 +268,8 @@ CAMLprim value ml_rayforce_table_new(value ncols) {
  * separately, matching ray_table_add_col's retain-internally contract. */
 CAMLprim value ml_rayforce_table_add_col(value tbl, value name_id, value col) {
     CAMLparam3(tbl, name_id, col);
-    ray_t* t = Rayforce_val(tbl);
-    ray_t* c = Rayforce_val(col);
+    ray_t* t = rayforce_val_exn(tbl);
+    ray_t* c = rayforce_val_exn(col);
     ray_t* result = ray_table_add_col(t, Int64_val(name_id), c);
     Rayforce_val(tbl) = NULL; /* consumed */
     raise_if_err(result);
@@ -266,12 +278,12 @@ CAMLprim value ml_rayforce_table_add_col(value tbl, value name_id, value col) {
 
 CAMLprim value ml_rayforce_table_nrows(value tbl) {
     CAMLparam1(tbl);
-    CAMLreturn(caml_copy_int64(ray_table_nrows(Rayforce_val(tbl))));
+    CAMLreturn(caml_copy_int64(ray_table_nrows(rayforce_val_exn(tbl))));
 }
 
 CAMLprim value ml_rayforce_table_ncols(value tbl) {
     CAMLparam1(tbl);
-    CAMLreturn(caml_copy_int64(ray_table_ncols(Rayforce_val(tbl))));
+    CAMLreturn(caml_copy_int64(ray_table_ncols(rayforce_val_exn(tbl))));
 }
 
 /* ===== Lists ================================================================= */
@@ -289,8 +301,8 @@ CAMLprim value ml_rayforce_list_new(value cap) {
 /* Consumes `list`, retains `item` internally — same shape as table_add_col. */
 CAMLprim value ml_rayforce_list_append(value list, value item) {
     CAMLparam2(list, item);
-    ray_t* l = Rayforce_val(list);
-    ray_t* i = Rayforce_val(item);
+    ray_t* l = rayforce_val_exn(list);
+    ray_t* i = rayforce_val_exn(item);
     ray_t* result = ray_list_append(l, i);
     Rayforce_val(list) = NULL; /* consumed */
     raise_if_err(result);
@@ -302,8 +314,8 @@ CAMLprim value ml_rayforce_list_append(value list, value item) {
 /* Consumes `keys` and `vals` both (ray_dict_new's documented contract). */
 CAMLprim value ml_rayforce_dict_new(value keys, value vals) {
     CAMLparam2(keys, vals);
-    ray_t* k = Rayforce_val(keys);
-    ray_t* v = Rayforce_val(vals);
+    ray_t* k = rayforce_val_exn(keys);
+    ray_t* v = rayforce_val_exn(vals);
     ray_t* result = ray_dict_new(k, v);
     Rayforce_val(keys) = NULL; /* consumed */
     Rayforce_val(vals) = NULL; /* consumed */
@@ -315,7 +327,7 @@ CAMLprim value ml_rayforce_dict_new(value keys, value vals) {
  * independently (see the file-header ownership note). */
 CAMLprim value ml_rayforce_dict_keys(value d) {
     CAMLparam1(d);
-    ray_t* keys = ray_dict_keys(Rayforce_val(d));
+    ray_t* keys = ray_dict_keys(rayforce_val_exn(d));
     raise_if_err(keys);
     ray_retain(keys);
     CAMLreturn(alloc_rayforce_value(keys));
@@ -323,7 +335,7 @@ CAMLprim value ml_rayforce_dict_keys(value d) {
 
 CAMLprim value ml_rayforce_dict_vals(value d) {
     CAMLparam1(d);
-    ray_t* vals = ray_dict_vals(Rayforce_val(d));
+    ray_t* vals = ray_dict_vals(rayforce_val_exn(d));
     raise_if_err(vals);
     ray_retain(vals);
     CAMLreturn(alloc_rayforce_value(vals));
@@ -331,14 +343,14 @@ CAMLprim value ml_rayforce_dict_vals(value d) {
 
 CAMLprim value ml_rayforce_dict_len(value d) {
     CAMLparam1(d);
-    CAMLreturn(caml_copy_int64(ray_dict_len(Rayforce_val(d))));
+    CAMLreturn(caml_copy_int64(ray_dict_len(rayforce_val_exn(d))));
 }
 
 /* Owned already (ray_dict_get's documented contract) -- wrap directly, no
  * retain. NULL (missing key) becomes None, not an exception. */
 CAMLprim value ml_rayforce_dict_get(value d, value key) {
     CAMLparam2(d, key);
-    ray_t* got = ray_dict_get(Rayforce_val(d), Rayforce_val(key));
+    ray_t* got = ray_dict_get(rayforce_val_exn(d), rayforce_val_exn(key));
     raise_if_err(got);
     CAMLreturn(alloc_rayforce_option(got));
 }
@@ -347,9 +359,9 @@ CAMLprim value ml_rayforce_dict_get(value d, value key) {
  * table_add_col/list_append). */
 CAMLprim value ml_rayforce_dict_upsert(value dict, value key, value v) {
     CAMLparam3(dict, key, v);
-    ray_t* d = Rayforce_val(dict);
-    ray_t* k = Rayforce_val(key);
-    ray_t* val = Rayforce_val(v);
+    ray_t* d = rayforce_val_exn(dict);
+    ray_t* k = rayforce_val_exn(key);
+    ray_t* val = rayforce_val_exn(v);
     ray_t* result = ray_dict_upsert(d, k, val);
     Rayforce_val(dict) = NULL; /* consumed */
     raise_if_err(result);
@@ -359,8 +371,8 @@ CAMLprim value ml_rayforce_dict_upsert(value dict, value key, value v) {
 /* Consumes `dict`; does not consume `key`. */
 CAMLprim value ml_rayforce_dict_remove(value dict, value key) {
     CAMLparam2(dict, key);
-    ray_t* d = Rayforce_val(dict);
-    ray_t* k = Rayforce_val(key);
+    ray_t* d = rayforce_val_exn(dict);
+    ray_t* k = rayforce_val_exn(key);
     ray_t* result = ray_dict_remove(d, k);
     Rayforce_val(dict) = NULL; /* consumed */
     raise_if_err(result);
@@ -372,7 +384,7 @@ CAMLprim value ml_rayforce_dict_remove(value dict, value key) {
 CAMLprim value ml_rayforce_fmt(value v, value pretty) {
     CAMLparam2(v, pretty);
     CAMLlocal1(s);
-    ray_t* formatted = ray_fmt(Rayforce_val(v), Bool_val(pretty) ? 1 : 0);
+    ray_t* formatted = ray_fmt(rayforce_val_exn(v), Bool_val(pretty) ? 1 : 0);
     raise_if_err(formatted);
     size_t len = ray_str_len(formatted);
     s = caml_alloc_string(len);
@@ -426,7 +438,7 @@ CAMLprim value ml_rayforce_env_get(value id) {
  * namespace) or any other non-RAY_OK code. */
 CAMLprim value ml_rayforce_env_set(value id, value v) {
     CAMLparam2(id, v);
-    ray_err_t rc = ray_env_set(Int64_val(id), Rayforce_val(v));
+    ray_err_t rc = ray_env_set(Int64_val(id), rayforce_val_exn(v));
     if (rc != RAY_OK) {
         char buf[64];
         snprintf(buf, sizeof(buf), "rayforce: %s", ray_err_code_str(rc));
@@ -512,8 +524,9 @@ CAMLprim value ml_rayforce_ipc_connect(value host, value port, value user,
 
 CAMLprim value ml_rayforce_ipc_close(value handle) {
     CAMLparam1(handle);
+    int64_t h = Int64_val(handle);
     caml_release_runtime_system();
-    ray_ipc_close(Int64_val(handle));
+    ray_ipc_close(h);
     caml_acquire_runtime_system();
     CAMLreturn(Val_unit);
 }
@@ -524,7 +537,7 @@ CAMLprim value ml_rayforce_ipc_close(value handle) {
 CAMLprim value ml_rayforce_ipc_send(value handle, value msg) {
     CAMLparam2(handle, msg);
     int64_t h = Int64_val(handle);
-    ray_t* m = Rayforce_val(msg);
+    ray_t* m = rayforce_val_exn(msg);
 
     caml_release_runtime_system();
     ray_t* result = ray_ipc_send(h, m);
@@ -542,7 +555,7 @@ CAMLprim value ml_rayforce_ipc_send(value handle, value msg) {
 CAMLprim value ml_rayforce_ipc_send_async(value handle, value msg) {
     CAMLparam2(handle, msg);
     int64_t h = Int64_val(handle);
-    ray_t* m = Rayforce_val(msg);
+    ray_t* m = rayforce_val_exn(msg);
 
     caml_release_runtime_system();
     ray_err_t rc = ray_ipc_send_async(h, m);

@@ -75,7 +75,10 @@ static struct custom_operations rayforce_value_ops = {
 };
 
 static value alloc_rayforce_value(ray_t* p) {
-    value v = caml_alloc_custom(&rayforce_value_ops, sizeof(ray_t*), 0, 1);
+    /* Charge only the allocation owned directly by p.  Retained size would
+     * double-count children that also have their own OCaml wrappers. */
+    size_t mem = ray_shallow_bytes(p);
+    value v = caml_alloc_custom_mem(&rayforce_value_ops, sizeof(ray_t*), mem);
     Rayforce_val(v) = p;
     return v;
 }

@@ -47,7 +47,9 @@ val sym_intern : string -> int64
 
 (** {2 Values}
 
-    A [t] wraps one [ray_t*] under a GC finalizer that calls [ray_release].
+    A [t] wraps one [ray_t*] under a GC finalizer that calls [ray_release]. The
+    wrapper charges [ray_shallow_bytes] to the OCaml GC as dependent memory;
+    retained children are excluded because they may have wrappers of their own.
 
     Some constructors below document that they {b consume} an input [t]:
     after such a call, the consumed value's underlying pointer has been

@@ -14,7 +14,9 @@ The project publishes two packages:
 
 - OCaml 4.14 or later
 - Dune 3.24 or later
-- a Rayforce installation that provides `rayforce.h` and `librayforce`
+- a Rayforce installation that provides `rayforce.h`, `librayforce`, and the
+  `ray_shallow_bytes` API added by
+  [RayforceDB/rayforce#522](https://github.com/RayforceDB/rayforce/issues/522)
 
 The build discovers Rayforce through `pkg-config`. If no `rayforce.pc` is
 installed, set `RAYFORCE_INCDIR` and `RAYFORCE_LIBDIR` to a Rayforce source
@@ -34,9 +36,12 @@ The IPC integration test starts a local Rayforce server and requires the
 
 Values of type `Rayforce.t` own a native Rayforce reference. They are released
 by an OCaml finalizer, or eagerly with `Rayforce.release` when their lifetime is
-known. Functions documented as consuming a value leave that OCaml wrapper
-moved-from and it must not be reused. Passing a released or moved-from value
-to another binding operation raises `Invalid_argument`.
+known. Each wrapper reports the value's shallow native allocation to the OCaml
+GC, so large Rayforce values create appropriate collection pressure without
+double-counting separately wrapped child values. Functions documented as
+consuming a value leave that OCaml wrapper moved-from and it must not be reused.
+Passing a released or moved-from value to another binding operation raises
+`Invalid_argument`.
 
 ## License
 

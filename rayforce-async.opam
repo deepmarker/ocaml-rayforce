@@ -6,6 +6,9 @@ description:
 maintainer: ["Vincent Bernardoff <vb@luminar.eu.org>"]
 authors: ["Vincent Bernardoff <vb@luminar.eu.org>"]
 license: "ISC"
+homepage: "https://github.com/deepmarker/ocaml-rayforce"
+doc: "https://github.com/deepmarker/ocaml-rayforce"
+bug-reports: "https://github.com/deepmarker/ocaml-rayforce/issues"
 depends: [
   "dune" {>= "3.24"}
   "ocaml" {>= "4.14.0"}
@@ -29,4 +32,5 @@ build: [
     "@doc" {with-doc}
   ]
 ]
+dev-repo: "git+https://github.com/deepmarker/ocaml-rayforce.git"
 x-maintenance-intent: ["(latest)"]

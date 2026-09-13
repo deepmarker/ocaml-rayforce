@@ -86,6 +86,11 @@ let shutdown () =
 
 type t = Rayforce.t
 
+let release v =
+  check_thread [%here];
+  Rayforce.release v
+;;
+
 let sym_intern s =
   check_thread [%here];
   Rayforce.sym_intern s

@@ -3,6 +3,8 @@ external sym_intern : string -> int64 = "ml_rayforce_sym_intern"
 
 type t
 
+external release : t -> unit = "ml_rayforce_release"
+
 external i64 : int64 -> t = "ml_rayforce_i64"
 external f64 : float -> t = "ml_rayforce_f64"
 external str : string -> t = "ml_rayforce_str"

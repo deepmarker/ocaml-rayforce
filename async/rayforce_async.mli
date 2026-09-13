@@ -78,6 +78,7 @@ val poll_exit : int64 -> unit
 
 type t = Rayforce.t
 
+val release : t -> unit
 val sym_intern : string -> int64
 val i64 : int64 -> t
 val f64 : float -> t

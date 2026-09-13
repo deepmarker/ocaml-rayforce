@@ -74,6 +74,16 @@ static value alloc_rayforce_value(ray_t* p) {
     return v;
 }
 
+/* Release deterministically when the caller knows a value is dead. Nulling
+ * first makes this idempotent and leaves the GC finalizer as a no-op. */
+CAMLprim value ml_rayforce_release(value v) {
+    CAMLparam1(v);
+    ray_t* p = Rayforce_val(v);
+    Rayforce_val(v) = NULL;
+    if (p) ray_release(p);
+    CAMLreturn(Val_unit);
+}
+
 /* `t option`: None for a genuine C-NULL "not found" result (ray_env_get,
  * ray_dict_get) — distinct from a RAY_ERROR ray_t*, which raise_if_err
  * turns into a Failure exception instead. Some p wraps p exactly like

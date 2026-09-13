@@ -15,5 +15,10 @@ let () =
   let tbl = Rayforce.table_add_col tbl ~name:qty_id qty_vec in
   assert (Rayforce.table_nrows tbl = 3L);
   assert (Rayforce.table_ncols tbl = 2L);
+  Rayforce.release px_vec;
+  Rayforce.release qty_vec;
+  Rayforce.release tbl;
+  (* Explicit release is safe in cleanup paths that may run twice. *)
+  Rayforce.release tbl;
   print_endline "ok"
 ;;

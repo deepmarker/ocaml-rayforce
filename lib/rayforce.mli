@@ -58,6 +58,12 @@ val sym_intern : string -> int64
 
 type t
 
+(** [release v] immediately releases [v]'s native allocation. It is
+    idempotent; after the first call [v] is moved-from and must not be passed
+    to any operation. The GC finalizer remains a fallback for values whose
+    lifetime is not known explicitly. *)
+val release : t -> unit
+
 (** {3 Atoms} *)
 
 val i64 : int64 -> t

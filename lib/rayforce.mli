@@ -29,6 +29,9 @@
     connections to. Idempotent — safe to call more than once. Must be
     called before any other function in this module.
 
+    Build-directory overrides [RAYFORCE_LIBDIR] and [RAYFORCE_INCDIR] are
+    tracked by Dune; changing them reruns native-library discovery.
+
     Not thread-safe with itself; call once from your main thread before
     spawning workers. *)
 val init : unit -> unit

@@ -15,5 +15,8 @@
 
 (rule
  (targets c_flags.sexp c_library_flags.sexp)
+ (deps
+  (env_var RAYFORCE_LIBDIR)
+  (env_var RAYFORCE_INCDIR))
  (action
   (run ./config/discover.exe)))

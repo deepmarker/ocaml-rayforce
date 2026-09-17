@@ -11,11 +11,16 @@ let () =
   Rayforce.init ();
   let h = Rayforce.connect "127.0.0.1" port in
   (* String payload: parsed and evaluated server-side. *)
-  let result = Rayforce.send h (Rayforce.str "(+ 1 2)") in
-  Printf.printf "send (+ 1 2) -> nrows=%Ld (sanity: string result has no table shape,\n\
-                 this just confirms the round trip didn't raise)\n"
-    (try Rayforce.table_nrows result with _ -> -1L);
-  Rayforce.send_async h (Rayforce.str "(println \"hello from ocaml\")");
+  let query = Rayforce.str "(+ 1 2)" in
+  let result = Rayforce.send h query in
+  Rayforce.release query;
+  let formatted = Rayforce.fmt result in
+  Rayforce.release result;
+  if formatted <> "3" then failwith ("unexpected IPC result: " ^ formatted);
+  Printf.printf "send (+ 1 2) -> %s\n" formatted;
+  let message = Rayforce.str "(println \"hello from ocaml\")" in
+  Rayforce.send_async h message;
+  Rayforce.release message;
   (* Give the server a moment to process + print before we close. *)
   Unix.sleepf 0.2;
   Rayforce.close h;

@@ -45,6 +45,7 @@
 #include <caml/mlvalues.h>
 #include <caml/threads.h>
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -260,7 +261,7 @@ CAMLprim value ml_rayforce_vec_sym(value ba) {
 
 CAMLprim value ml_rayforce_table_new(value ncols) {
     CAMLparam1(ncols);
-    ray_t* t = ray_table_new(Int64_val(ncols));
+    ray_t* t = ray_table_new(Int_val(ncols));
     raise_if_err(t);
     CAMLreturn(alloc_rayforce_value(t));
 }
@@ -281,12 +282,12 @@ CAMLprim value ml_rayforce_table_add_col(value tbl, value name_id, value col) {
 
 CAMLprim value ml_rayforce_table_nrows(value tbl) {
     CAMLparam1(tbl);
-    CAMLreturn(caml_copy_int64(ray_table_nrows(rayforce_val_exn(tbl))));
+    CAMLreturn(Val_long(ray_table_nrows(rayforce_val_exn(tbl))));
 }
 
 CAMLprim value ml_rayforce_table_ncols(value tbl) {
     CAMLparam1(tbl);
-    CAMLreturn(caml_copy_int64(ray_table_ncols(rayforce_val_exn(tbl))));
+    CAMLreturn(Val_long(ray_table_ncols(rayforce_val_exn(tbl))));
 }
 
 /* ===== Lists ================================================================= */
@@ -296,7 +297,7 @@ CAMLprim value ml_rayforce_table_ncols(value tbl) {
 
 CAMLprim value ml_rayforce_list_new(value cap) {
     CAMLparam1(cap);
-    ray_t* l = ray_list_new(Int64_val(cap));
+    ray_t* l = ray_list_new(Int_val(cap));
     raise_if_err(l);
     CAMLreturn(alloc_rayforce_value(l));
 }
@@ -346,7 +347,7 @@ CAMLprim value ml_rayforce_dict_vals(value d) {
 
 CAMLprim value ml_rayforce_dict_len(value d) {
     CAMLparam1(d);
-    CAMLreturn(caml_copy_int64(ray_dict_len(rayforce_val_exn(d))));
+    CAMLreturn(Val_long(ray_dict_len(rayforce_val_exn(d))));
 }
 
 /* Owned already (ray_dict_get's documented contract) -- wrap directly, no
@@ -454,9 +455,23 @@ CAMLprim value ml_rayforce_env_set(value id, value v) {
 /* Drives ml_rayforce_poll, the same poll ml_rayforce_init attaches to the
  * runtime and ray_ipc_connect registers outbound sockets on. */
 
+/* ml_rayforce_poll is NULL until ml_rayforce_init runs. rayforce's own poll
+ * API tolerates that (src/core/poll.c null-checks all four entry points),
+ * but it does so *silently*: poll_run/poll_run_for return -1 and
+ * poll_exit/poll_set_restricted are no-ops, so a poll_* call that precedes
+ * init looks like a poll that served nothing rather than a bug. This is not
+ * a crash fix — it makes that misuse report the way every other entry point
+ * here does, as an OCaml exception. Always called with the runtime lock
+ * still held: caml_failwith must not run without it. */
+static ray_poll_t* poll_exn(void) {
+    if (!ml_rayforce_poll)
+        caml_failwith("rayforce: not initialized -- call Rayforce.init first");
+    return ml_rayforce_poll;
+}
+
 CAMLprim value ml_rayforce_poll_set_restricted(value restricted) {
     CAMLparam1(restricted);
-    ray_poll_set_restricted(ml_rayforce_poll, Bool_val(restricted));
+    ray_poll_set_restricted(poll_exn(), Bool_val(restricted));
     CAMLreturn(Val_unit);
 }
 
@@ -465,24 +480,26 @@ CAMLprim value ml_rayforce_poll_set_restricted(value restricted) {
  * other OCaml threads/domains while servicing events. */
 CAMLprim value ml_rayforce_poll_run(value unit) {
     CAMLparam1(unit);
+    ray_poll_t* poll = poll_exn();
     caml_release_runtime_system();
-    int64_t rc = ray_poll_run(ml_rayforce_poll);
+    int64_t rc = ray_poll_run(poll);
     caml_acquire_runtime_system();
-    CAMLreturn(caml_copy_int64(rc));
+    CAMLreturn(Val_long(rc));
 }
 
 CAMLprim value ml_rayforce_poll_run_for(value timeout_ms) {
     CAMLparam1(timeout_ms);
+    ray_poll_t* poll = poll_exn();
     int timeout = Int_val(timeout_ms);
     caml_release_runtime_system();
-    int64_t rc = ray_poll_run_for(ml_rayforce_poll, timeout);
+    int64_t rc = ray_poll_run_for(poll, timeout);
     caml_acquire_runtime_system();
-    CAMLreturn(caml_copy_int64(rc));
+    CAMLreturn(Val_long(rc));
 }
 
 CAMLprim value ml_rayforce_poll_exit(value code) {
     CAMLparam1(code);
-    ray_poll_exit(ml_rayforce_poll, Int64_val(code));
+    ray_poll_exit(poll_exn(), Int_val(code));
     CAMLreturn(Val_unit);
 }
 
@@ -515,19 +532,21 @@ CAMLprim value ml_rayforce_ipc_connect(value host, value port, value user,
         memcpy(pass_buf, p, l + 1);
         p = pass_buf;
     }
-    int64_t port_i = Int64_val(port);
-    int64_t timeout_i = Int64_val(timeout_ms);
+    uint16_t port_i = (uint16_t)Int_val(port);
+    int timeout_i = Int_val(timeout_ms);
 
     caml_release_runtime_system();
-    int64_t h = ray_ipc_connect(host_buf, (uint16_t)port_i, u, p, (int)timeout_i);
+    int64_t h = ray_ipc_connect(host_buf, port_i, u, p, timeout_i);
     caml_acquire_runtime_system();
 
-    CAMLreturn(caml_copy_int64(h));
+    /* Handles are process-local slot indices (rayforce.h), so they fit an
+     * OCaml int; negative values are the error codes connect() checks for. */
+    CAMLreturn(Val_long(h));
 }
 
 CAMLprim value ml_rayforce_ipc_close(value handle) {
     CAMLparam1(handle);
-    int64_t h = Int64_val(handle);
+    int64_t h = Int_val(handle);
     caml_release_runtime_system();
     ray_ipc_close(h);
     caml_acquire_runtime_system();
@@ -539,7 +558,7 @@ CAMLprim value ml_rayforce_ipc_close(value handle) {
  * by network latency. */
 CAMLprim value ml_rayforce_ipc_send(value handle, value msg) {
     CAMLparam2(handle, msg);
-    int64_t h = Int64_val(handle);
+    int64_t h = Int_val(handle);
     ray_t* m = rayforce_val_exn(msg);
 
     caml_release_runtime_system();
@@ -557,7 +576,7 @@ CAMLprim value ml_rayforce_ipc_send(value handle, value msg) {
  * observable here by design (see the IPC guide). */
 CAMLprim value ml_rayforce_ipc_send_async(value handle, value msg) {
     CAMLparam2(handle, msg);
-    int64_t h = Int64_val(handle);
+    int64_t h = Int_val(handle);
     ray_t* m = rayforce_val_exn(msg);
 
     caml_release_runtime_system();

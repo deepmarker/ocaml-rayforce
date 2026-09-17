@@ -2,6 +2,12 @@
  (name test)
  (libraries rayforce))
 
+; Runs in its own process: the NULL-poll condition it checks only exists
+; before Rayforce.init, which is process-global and idempotent.
+(test
+ (name test_no_init)
+ (libraries rayforce))
+
 (executable
  (name test_ipc)
  (libraries rayforce unix))

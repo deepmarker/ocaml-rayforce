@@ -68,7 +68,7 @@ val poll_set_restricted : bool -> unit
     own zero-timeout drain, which never blocks; provided only because
     {!Rayforce.poll_exit} is otherwise unreachable once everything else
     here is thread-guarded. *)
-val poll_exit : int64 -> unit
+val poll_exit : int -> unit
 
 (** {2 Values}
 
@@ -89,6 +89,10 @@ val vec_i64
   :  (int64, Bigarray.int64_elt, Bigarray.c_layout) Bigarray.Array1.t
   -> t
 
+val vec_bool
+  :  (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+  -> t
+
 val vec_f64
   :  (float, Bigarray.float64_elt, Bigarray.c_layout) Bigarray.Array1.t
   -> t
@@ -99,25 +103,25 @@ val vec_timestamp
 
 val vec_sym : (int64, Bigarray.int64_elt, Bigarray.c_layout) Bigarray.Array1.t -> t
 
-(** Pure int64 arithmetic, doesn't touch rayforce state -- unguarded,
+(** Pure int arithmetic, doesn't touch rayforce state -- unguarded,
     usable from any thread. See {!Rayforce.epoch_offset_ns}. *)
-val epoch_offset_ns : int64
+val epoch_offset_ns : int
 
-val of_time_ns : int64 -> int64
-val to_time_ns : int64 -> int64
+val of_time_ns : int -> int
+val to_time_ns : int -> int
 
-val table_new : int64 -> t
+val table_new : int -> t
 val table_add_col : t -> name:int64 -> t -> t
-val table_nrows : t -> int64
-val table_ncols : t -> int64
+val table_nrows : t -> int
+val table_ncols : t -> int
 
-val list_new : int64 -> t
+val list_new : int -> t
 val list_append : t -> t -> t
 
 val dict_new : t -> t -> t
 val dict_keys : t -> t
 val dict_vals : t -> t
-val dict_len : t -> int64
+val dict_len : t -> int
 val dict_get : t -> key:t -> t option
 val dict_upsert : t -> key:t -> t -> t
 val dict_remove : t -> key:t -> t

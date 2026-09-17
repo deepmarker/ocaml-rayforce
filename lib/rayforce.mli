@@ -102,21 +102,28 @@ val vec_timestamp
     (the vector resolves against the process-global intern table). *)
 val vec_sym : (int64, Bigarray.int64_elt, Bigarray.c_layout) Bigarray.Array1.t -> t
 
-(** {3 Epoch conversion} *)
+(** {3 Epoch conversion}
+
+    Plain [int] throughout: 63 bits hold ~146 years of nanoseconds, so a
+    rayforce-epoch ns value is exact until ~2146 — the same reason Core's
+    [Time_ns] is int-backed, and it pairs directly with
+    [Time_ns.to_int_ns_since_epoch] without a box. The widening to [int64]
+    belongs at the Bigarray handed to {!vec_timestamp}, which is where
+    RAY_TIMESTAMP's [int64_t] layout actually forces it. *)
 
 (** Nanoseconds between the unix epoch and rayforce's 2000-01-01 epoch. *)
-val epoch_offset_ns : int64
+val epoch_offset_ns : int
 
 (** Unix-epoch ns -> rayforce-epoch ns. *)
-val of_time_ns : int64 -> int64
+val of_time_ns : int -> int
 
 (** Rayforce-epoch ns -> unix-epoch ns. *)
-val to_time_ns : int64 -> int64
+val to_time_ns : int -> int
 
 (** {3 Tables} *)
 
 (** [table_new ncols] allocates an empty table sized for [ncols] columns. *)
-val table_new : int64 -> t
+val table_new : int -> t
 
 (** [table_add_col tbl ~name col] appends [col] under the interned symbol
     id [name]. {b Consumes [tbl]}; does not consume [col] — the caller
@@ -124,13 +131,13 @@ val table_new : int64 -> t
     [ray_table_add_col]'s "retains col internally" contract). *)
 val table_add_col : t -> name:int64 -> t -> t
 
-val table_nrows : t -> int64
-val table_ncols : t -> int64
+val table_nrows : t -> int
+val table_ncols : t -> int
 
 (** {3 Lists} *)
 
 (** [list_new cap] allocates an empty list with initial capacity [cap]. *)
-val list_new : int64 -> t
+val list_new : int -> t
 
 (** [list_append lst item] appends [item]. {b Consumes [lst]}; does not
     consume [item] (matches [ray_list_append]'s retain-internally
@@ -155,7 +162,7 @@ val dict_keys : t -> t
 val dict_vals : t -> t
 
 (** Pair count (same as [keys]'s length). *)
-val dict_len : t -> int64
+val dict_len : t -> int
 
 (** [None] if [key] is not bound in [dict]. *)
 val dict_get : t -> key:t -> t option
@@ -231,18 +238,18 @@ val poll_set_restricted : bool -> unit
     from a hook. Releases the OCaml runtime lock for the duration, like
     {!send}, so other OCaml threads/domains aren't stalled. Returns the
     exit code passed to {!poll_exit}. *)
-val poll_run : unit -> int64
+val poll_run : unit -> int
 
 (** As {!poll_run}, but serves for at most [timeout_ms] milliseconds
     (negative preserves {!poll_run}'s blocking behavior; [0] does one
     non-blocking drain) before returning. *)
-val poll_run_for : int -> int64
+val poll_run_for : int -> int
 
 (** Ends a {!poll_run}/{!poll_run_for} loop currently blocked in
     {!poll_run}, with the given exit code. Typically called from a
     Rayfall hook (e.g. a [.sys.] handler) via {!eval_str}-installed
     logic, not from the OCaml side of a running loop. *)
-val poll_exit : int64 -> unit
+val poll_exit : int -> unit
 
 (** {2 IPC client}
 
@@ -253,6 +260,8 @@ val poll_exit : int64 -> unit
     release the OCaml runtime lock for the duration of the underlying C
     call, so a slow peer doesn't stall other OCaml threads/domains. *)
 
+(** A process-local slot index (rayforce.h), not a pointer — abstract so
+    callers can't invent one. *)
 type conn
 
 (** [connect ?user ?password ?timeout_ms host port] opens a connection.

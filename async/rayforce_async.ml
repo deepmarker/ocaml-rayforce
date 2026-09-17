@@ -53,7 +53,7 @@ let serve ?(period = Time_ns.Span.of_ms 1.) () =
     serve_stop := Some stop;
     Clock_ns.every ~stop:(Ivar.read stop) ~continue_on_error:true period (fun () ->
       check_thread [%here];
-      ignore (Rayforce.poll_run_for 0 : int64))
+      ignore (Rayforce.poll_run_for 0 : int))
 ;;
 
 let stop_serving () =
@@ -121,6 +121,11 @@ let vec_i64 ba =
   Rayforce.vec_i64 ba
 ;;
 
+let vec_bool ba =
+  check_thread [%here];
+  Rayforce.vec_bool ba
+;;
+
 let vec_f64 ba =
   check_thread [%here];
   Rayforce.vec_f64 ba
@@ -136,7 +141,7 @@ let vec_sym ba =
   Rayforce.vec_sym ba
 ;;
 
-(* Pure int64 arithmetic, doesn't touch rayforce state -- deliberately
+(* Pure int arithmetic, doesn't touch rayforce state -- deliberately
    unguarded, see the .mli. *)
 let epoch_offset_ns = Rayforce.epoch_offset_ns
 let of_time_ns = Rayforce.of_time_ns
